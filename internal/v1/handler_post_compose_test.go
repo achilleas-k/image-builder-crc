@@ -2304,7 +2304,7 @@ func TestComposeCustomizations(t *testing.T) {
 							Mountpoint: "/",
 						},
 					},
-					PartitioningMode: common.ToPtr(v1.Lvm),
+					PartitioningMode: common.ToPtr(v1.CustomizationsPartitioningModeLvm),
 				},
 				Distribution: "rhel-8",
 				ImageRequests: []v1.ImageRequest{

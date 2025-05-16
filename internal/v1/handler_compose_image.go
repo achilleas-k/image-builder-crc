@@ -1018,11 +1018,11 @@ func (h *Handlers) buildCustomizations(ctx echo.Context, cr *ComposeRequest, d *
 	if cust.PartitioningMode != nil {
 		var mode composer.BlueprintCustomizationsPartitioningMode
 		switch *cust.PartitioningMode {
-		case AutoLvm:
+		case CustomizationsPartitioningModeAutoLvm:
 			mode = composer.BlueprintCustomizationsPartitioningModeAutoLvm
-		case Lvm:
+		case CustomizationsPartitioningModeLvm:
 			mode = composer.BlueprintCustomizationsPartitioningModeLvm
-		case Raw:
+		case CustomizationsPartitioningModeRaw:
 			mode = composer.BlueprintCustomizationsPartitioningModeRaw
 		}
 		res.PartitioningMode = common.ToPtr(composer.CustomizationsPartitioningMode(mode))
