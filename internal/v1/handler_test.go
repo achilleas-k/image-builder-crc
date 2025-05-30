@@ -1443,3 +1443,94 @@ func TestGetCustomizations(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, code)
 	})
 }
+
+func TestDiskToComposer(t *testing.T) {
+	type testCase struct {
+		in     v1.Disk
+		expOut composer.Disk
+	}
+
+	testCases := map[string]testCase{
+		"plain": {
+			in: v1.Disk{
+				Partitions: []v1.Partition{
+					plainToPartitionV1(v1.FilesystemTyped{
+						FsType:     v1.FilesystemTypedFsTypeExt4,
+						Minsize:    common.ToPtr("1 GiB"),
+						Mountpoint: common.ToPtr("/data"),
+					}),
+				},
+			},
+			expOut: composer.Disk{
+				Partitions: []composer.Partition{
+					plainToPartitionComposer(composer.FilesystemTyped{
+						FsType:     composer.FilesystemTypedFsTypeExt4,
+						Minsize:    common.ToPtr("1 GiB"),
+						Mountpoint: common.ToPtr("/data"),
+					}),
+				},
+			},
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+
+			out, err := v1.DiskToComposer(&tc.in)
+			require.NoError(err)
+			require.NotNil(out)
+
+			require.Equal(tc.expOut, *out)
+		})
+	}
+
+}
+
+func plainToPartitionV1(fs v1.FilesystemTyped) v1.Partition {
+	p := &v1.Partition{}
+	if err := p.FromFilesystemTyped(fs); err != nil {
+		panic(fmt.Errorf("bad test data for FilesystemTyped Partition: %s", err))
+	}
+	return *p
+}
+
+func vgToPartitionV1(vg v1.VolumeGroup) v1.Partition {
+	p := &v1.Partition{}
+	if err := p.FromVolumeGroup(vg); err != nil {
+		panic(fmt.Sprintf("bad test data for VolumeGroup Partition: %s", err))
+	}
+	return *p
+}
+
+func btrfsToPartitioV1(b v1.BtrfsVolume) v1.Partition {
+	p := &v1.Partition{}
+	if err := p.FromBtrfsVolume(b); err != nil {
+		panic("bad test data for BtrfsVolume Partition")
+	}
+	return *p
+}
+
+func plainToPartitionComposer(fs composer.FilesystemTyped) composer.Partition {
+	p := &composer.Partition{}
+	if err := p.FromFilesystemTyped(fs); err != nil {
+		panic(fmt.Errorf("bad test data for FilesystemTyped Partition: %s", err))
+	}
+	return *p
+}
+
+func vgToPartitionComposer(vg composer.VolumeGroup) composer.Partition {
+	p := &composer.Partition{}
+	if err := p.FromVolumeGroup(vg); err != nil {
+		panic(fmt.Sprintf("bad test data for VolumeGroup Partition: %s", err))
+	}
+	return *p
+}
+
+func btrfsToPartitioComposer(b composer.BtrfsVolume) composer.Partition {
+	p := &composer.Partition{}
+	if err := p.FromBtrfsVolume(b); err != nil {
+		panic("bad test data for BtrfsVolume Partition")
+	}
+	return *p
+}

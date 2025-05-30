@@ -7,6 +7,7 @@ import (
 var (
 	BuildOSTreeOptions     = buildOSTreeOptions
 	ValidateComposeRequest = validateComposeRequest
+	DiskToComposer         = diskToComposer
 )
 
 func (s *Server) GetDB() db.DB {

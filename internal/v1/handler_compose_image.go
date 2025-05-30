@@ -1329,5 +1329,87 @@ func (h *Handlers) buildCustomizations(ctx echo.Context, cr *ComposeRequest, d *
 		}
 	}
 
+	disk, err := diskToComposer(cust.Disk)
+	if err != nil {
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("invalid disk customization: %v", err))
+	}
+	res.Disk = disk
+
 	return res, nil
+}
+
+func diskToComposer(disk *Disk) (*composer.Disk, error) {
+	if disk == nil {
+		return nil, nil
+	}
+	var cdisk composer.Disk
+	cdisk.Minsize = disk.Minsize
+	if disk.Type != nil {
+		cdisk.Type = common.ToPtr(composer.DiskType(*disk.Type))
+	}
+	for idx, part := range disk.Partitions {
+		cpart, err := partitionToComposer(part)
+		if err != nil {
+			return nil, fmt.Errorf("invalid partition at index %d: %v", idx, err)
+		}
+		cdisk.Partitions = append(cdisk.Partitions, cpart)
+	}
+	return &cdisk, nil
+}
+
+func partitionToComposer(partition Partition) (composer.Partition, error) {
+	if fs, err := partition.AsFilesystemTyped(); err == nil {
+		fsPart := composer.Partition{}
+
+		var ptype *composer.FilesystemTypedType
+		if fs.Type != nil {
+			ptype = common.ToPtr(composer.FilesystemTypedType(*fs.Type))
+		}
+
+		err := fsPart.FromFilesystemTyped(composer.FilesystemTyped{
+			Type:       ptype,
+			FsType:     composer.FilesystemTypedFsType(fs.FsType),
+			Label:      fs.Label,
+			Minsize:    fs.Minsize,
+			Mountpoint: fs.Mountpoint,
+			PartType:   fs.PartType,
+		})
+		return fsPart, err
+	}
+
+	if vg, err := partition.AsVolumeGroup(); err == nil {
+		cvg := composer.VolumeGroup{
+			Type:     composer.VolumeGroupType(vg.Type),
+			Minsize:  vg.Minsize,
+			Name:     vg.Name,
+			PartType: vg.PartType,
+		}
+		for _, lv := range vg.LogicalVolumes {
+			cvg.LogicalVolumes = append(cvg.LogicalVolumes,
+				composer.LogicalVolume{
+					FsType:     composer.LogicalVolumeFsType(lv.FsType),
+					Label:      lv.Label,
+					Minsize:    lv.Minsize,
+					Mountpoint: lv.Mountpoint,
+					Name:       lv.Name,
+				},
+			)
+		}
+
+		vgPart := &composer.Partition{}
+		err := vgPart.FromVolumeGroup(cvg)
+		return *vgPart, err
+	}
+
+	if btrfs, err := partition.AsBtrfsVolume(); err == nil {
+		btrfsPart := composer.Partition{}
+		err := btrfsPart.FromBtrfsVolume(composer.BtrfsVolume{
+			Type:     composer.BtrfsVolumeType(btrfs.Type),
+			Minsize:  btrfs.Minsize,
+			PartType: btrfs.PartType,
+		})
+		return btrfsPart, err
+	}
+
+	return composer.Partition{}, fmt.Errorf("disk partition customization did not match any of the known types")
 }
