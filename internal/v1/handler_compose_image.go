@@ -1342,74 +1342,23 @@ func diskToComposer(disk *Disk) (*composer.Disk, error) {
 	if disk == nil {
 		return nil, nil
 	}
-	var cdisk composer.Disk
-	cdisk.Minsize = disk.Minsize
-	if disk.Type != nil {
-		cdisk.Type = common.ToPtr(composer.DiskType(*disk.Type))
+
+	// The disk customizations have identical schemas, so we can use json
+	// serialization to convert from one type to the other. This is stupid and
+	// wasteful, because we're essentially doing:
+	//  - Unmarshal customizations from request in API to CRC types
+	//  - Marshal disk
+	//  - Unmarshal disk to composer types
+	//  - Marshal disk in composer client to send over the wire
+
+	diskS, err := json.Marshal(disk)
+	if err != nil {
+		return nil, err
 	}
-	for idx, part := range disk.Partitions {
-		cpart, err := partitionToComposer(part)
-		if err != nil {
-			return nil, fmt.Errorf("invalid partition at index %d: %v", idx, err)
-		}
-		cdisk.Partitions = append(cdisk.Partitions, cpart)
+
+	var cdisk composer.Disk
+	if err := json.Unmarshal(diskS, &cdisk); err != nil {
+		return nil, err
 	}
 	return &cdisk, nil
-}
-
-func partitionToComposer(partition Partition) (composer.Partition, error) {
-	if fs, err := partition.AsFilesystemTyped(); err == nil {
-		fsPart := composer.Partition{}
-
-		var ptype *composer.FilesystemTypedType
-		if fs.Type != nil {
-			ptype = common.ToPtr(composer.FilesystemTypedType(*fs.Type))
-		}
-
-		err := fsPart.FromFilesystemTyped(composer.FilesystemTyped{
-			Type:       ptype,
-			FsType:     composer.FilesystemTypedFsType(fs.FsType),
-			Label:      fs.Label,
-			Minsize:    fs.Minsize,
-			Mountpoint: fs.Mountpoint,
-			PartType:   fs.PartType,
-		})
-		return fsPart, err
-	}
-
-	if vg, err := partition.AsVolumeGroup(); err == nil {
-		cvg := composer.VolumeGroup{
-			Type:     composer.VolumeGroupType(vg.Type),
-			Minsize:  vg.Minsize,
-			Name:     vg.Name,
-			PartType: vg.PartType,
-		}
-		for _, lv := range vg.LogicalVolumes {
-			cvg.LogicalVolumes = append(cvg.LogicalVolumes,
-				composer.LogicalVolume{
-					FsType:     composer.LogicalVolumeFsType(lv.FsType),
-					Label:      lv.Label,
-					Minsize:    lv.Minsize,
-					Mountpoint: lv.Mountpoint,
-					Name:       lv.Name,
-				},
-			)
-		}
-
-		vgPart := &composer.Partition{}
-		err := vgPart.FromVolumeGroup(cvg)
-		return *vgPart, err
-	}
-
-	if btrfs, err := partition.AsBtrfsVolume(); err == nil {
-		btrfsPart := composer.Partition{}
-		err := btrfsPart.FromBtrfsVolume(composer.BtrfsVolume{
-			Type:     composer.BtrfsVolumeType(btrfs.Type),
-			Minsize:  btrfs.Minsize,
-			PartType: btrfs.PartType,
-		})
-		return btrfsPart, err
-	}
-
-	return composer.Partition{}, fmt.Errorf("disk partition customization did not match any of the known types")
 }

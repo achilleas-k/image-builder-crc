@@ -1484,6 +1484,87 @@ func TestDiskToComposer(t *testing.T) {
 			require.Equal(tc.expOut, *out)
 		})
 	}
+}
+
+func _(t *testing.T) {
+	type testCase struct {
+		in  []byte
+		exp composer.Disk
+	}
+
+	testCases := map[string]testCase{
+		"plain": {
+			in: []byte(`{
+  "partitions": [
+    {
+      "mountpoint": "/data",
+      "fs_type": "ext4",
+      "minsize": "1073741824"
+    },
+    {
+      "mountpoint": "/home",
+      "label": "home",
+      "fs_type": "ext4",
+      "minsize": "2147483648"
+    },
+    {
+      "mountpoint": "/home/shadowman",
+      "fs_type": "ext4",
+      "minsize": "524288000"
+    },
+    {
+      "mountpoint": "/foo",
+      "fs_type": "ext4",
+      "minsize": "1 GiB"
+    },
+    {
+      "mountpoint": "/var",
+      "fs_type": "xfs",
+      "minsize": "4 GiB"
+    },
+    {
+      "mountpoint": "/opt",
+      "fs_type": "ext4",
+      "minsize": "3 GiB"
+    },
+    {
+      "mountpoint": "/media",
+      "fs_type": "ext4",
+      "minsize": "10 GiB"
+    },
+    {
+      "mountpoint": "/root",
+      "fs_type": "ext4",
+      "minsize": "1024 MiB"
+    },
+    {
+	  "type": "lvm",
+	  "logical_volumes": []
+    },
+    {
+      "fs_type": "swap",
+      "minsize": "1 GiB"
+    }
+  ]
+}`),
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+
+			var disk v1.Disk
+			require.NoError(json.Unmarshal(tc.in, &disk))
+
+			out, err := v1.DiskToComposer(&disk)
+			require.NoError(err)
+
+			var cpart composer.Disk
+			require.NoError(json.Unmarshal(tc.in, &cpart))
+			require.Equal(cpart, out)
+		})
+	}
 
 }
 
