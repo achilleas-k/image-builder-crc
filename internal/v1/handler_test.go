@@ -1471,6 +1471,66 @@ func TestDiskToComposer(t *testing.T) {
 				},
 			},
 		},
+		"lvm": {
+			in: v1.Disk{
+				Partitions: []v1.Partition{
+					vgToPartitionV1(v1.VolumeGroup{
+						Minsize: common.ToPtr("1 GiB"),
+						LogicalVolumes: []v1.LogicalVolume{
+							{
+								FsType:     "xfs",
+								Label:      common.ToPtr("lv-one"),
+								Minsize:    common.ToPtr("10 MiB"),
+								Mountpoint: common.ToPtr("/data"),
+								Name:       common.ToPtr("lv1"),
+							},
+							{
+								FsType:     "ext4",
+								Label:      common.ToPtr("lv-two"),
+								Minsize:    common.ToPtr("100 MiB"),
+								Mountpoint: common.ToPtr("/data2"),
+								Name:       common.ToPtr("lv2"),
+							},
+							{
+								FsType:  "swap",
+								Label:   common.ToPtr("lv-swap"),
+								Minsize: common.ToPtr("1 GiB"),
+								Name:    common.ToPtr("swap"),
+							},
+						},
+					}),
+				},
+			},
+			expOut: composer.Disk{
+				Partitions: []composer.Partition{
+					vgToPartitionComposer(composer.VolumeGroup{
+						Minsize: common.ToPtr("1 GiB"),
+						LogicalVolumes: []composer.LogicalVolume{
+							{
+								FsType:     "xfs",
+								Label:      common.ToPtr("lv-one"),
+								Minsize:    common.ToPtr("10 MiB"),
+								Mountpoint: common.ToPtr("/data"),
+								Name:       common.ToPtr("lv1"),
+							},
+							{
+								FsType:     "ext4",
+								Label:      common.ToPtr("lv-two"),
+								Minsize:    common.ToPtr("100 MiB"),
+								Mountpoint: common.ToPtr("/data2"),
+								Name:       common.ToPtr("lv2"),
+							},
+							{
+								FsType:  "swap",
+								Label:   common.ToPtr("lv-swap"),
+								Minsize: common.ToPtr("1 GiB"),
+								Name:    common.ToPtr("swap"),
+							},
+						},
+					}),
+				},
+			},
+		},
 	}
 
 	for name, tc := range testCases {
@@ -1482,6 +1542,87 @@ func TestDiskToComposer(t *testing.T) {
 			require.NotNil(out)
 
 			require.Equal(tc.expOut, *out)
+		})
+	}
+}
+
+func _(t *testing.T) {
+	type testCase struct {
+		in  []byte
+		exp composer.Disk
+	}
+
+	testCases := map[string]testCase{
+		"plain": {
+			in: []byte(`{
+	"partitions": [
+		{
+			"mountpoint": "/data",
+			"fs_type": "ext4",
+			"minsize": "1073741824"
+		},
+		{
+			"mountpoint": "/home",
+			"label": "home",
+			"fs_type": "ext4",
+			"minsize": "2147483648"
+		},
+		{
+			"mountpoint": "/home/shadowman",
+			"fs_type": "ext4",
+			"minsize": "524288000"
+		},
+		{
+			"mountpoint": "/foo",
+			"fs_type": "ext4",
+			"minsize": "1 GiB"
+		},
+		{
+			"mountpoint": "/var",
+			"fs_type": "xfs",
+			"minsize": "4 GiB"
+		},
+		{
+			"mountpoint": "/opt",
+			"fs_type": "ext4",
+			"minsize": "3 GiB"
+		},
+		{
+			"mountpoint": "/media",
+			"fs_type": "ext4",
+			"minsize": "10 GiB"
+		},
+		{
+			"mountpoint": "/root",
+			"fs_type": "ext4",
+			"minsize": "1024 MiB"
+		},
+		{
+		"type": "lvm",
+		"logical_volumes": []
+		},
+		{
+			"fs_type": "swap",
+			"minsize": "1 GiB"
+		}
+	]
+}`),
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+
+			var disk v1.Disk
+			require.NoError(json.Unmarshal(tc.in, &disk))
+
+			out, err := v1.DiskToComposer(&disk)
+			require.NoError(err)
+
+			var cpart composer.Disk
+			require.NoError(json.Unmarshal(tc.in, &cpart))
+			require.Equal(cpart, out)
 		})
 	}
 
@@ -1533,4 +1674,279 @@ func btrfsToPartitioComposer(b composer.BtrfsVolume) composer.Partition {
 		panic("bad test data for BtrfsVolume Partition")
 	}
 	return *p
+}
+
+func TestDiskCustomizationValidation(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "Bearer" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		require.Equal(t, "Bearer accesstoken", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		result := composer.ComposeId{
+			Id: uuid.New(),
+		}
+		err := json.NewEncoder(w).Encode(result)
+		require.NoError(t, err)
+	}))
+	defer apiSrv.Close()
+
+	srv := startServer(t, &testServerClientsConf{ComposerURL: apiSrv.URL}, nil)
+	defer srv.Shutdown(t)
+
+	var uo v1.UploadRequest_Options
+	require.NoError(t, uo.FromAWSUploadRequestOptions(v1.AWSUploadRequestOptions{
+		ShareWithAccounts: &[]string{"test-account"},
+	}))
+
+	type testCase struct {
+		disk       string
+		expStatus  int
+		expMessage string
+	}
+
+	testCases := map[string]testCase{
+		"happy": {
+			disk: `
+{
+	"partitions": [
+		{
+			"mountpoint": "/",
+			"minsize": "2 GiB",
+			"fs_type": "ext4"
+		},
+		{
+			"type": "plain",
+			"mountpoint": "/data",
+			"minsize": "2 GiB",
+			"fs_type": "xfs"
+		},
+		{
+			"type": "plain",
+			"minsize": "2 GiB",
+			"fs_type": "swap"
+		},
+		{
+			"type": "lvm",
+			"minsize": "20 GiB",
+			"logical_volumes": [
+				{
+					"name": "lv1",
+					"minsize": "5 GiB",
+					"mountpoint": "/home",
+					"fs_type": "ext4"
+				},
+				{
+					"name": "swaplv",
+					"minsize": "5 GiB",
+					"fs_type": "swap"
+				}
+			]
+		},
+		{
+			"type": "btrfs",
+			"minsize": "30 GiB",
+			"subvolumes": [
+				{
+					"name": "blobs",
+					"mountpoint": "/data/blobs"
+				},
+				{
+					"name": "scratch",
+					"mountpoint": "/data/scratch"
+				}
+			]
+		}
+	]
+}
+`,
+			expStatus: http.StatusCreated,
+		},
+		"empty": {
+			disk:       `{}`,
+			expStatus:  http.StatusBadRequest,
+			expMessage: "Value is not nullable",
+		},
+		"no-fs-type": {
+			disk: `
+{
+	"partitions": [
+		{
+			"mountpoint": "/",
+			"minsize": "2 GiB"
+		}
+	]
+}
+`,
+			expStatus:  http.StatusBadRequest,
+			expMessage: "property \\\"fs_type\\\" is missing",
+		},
+		"notype-with-lv": {
+			disk: `
+{
+	"partitions": [
+		{
+			"logical_volumes": [
+				{
+					"name": "homelv",
+					"mountpoint": "/home",
+					"label": "home",
+					"fs_type": "ext4",
+					"minsize": "2 GiB"
+				}
+			]
+		}
+	]
+}
+`,
+			expStatus:  http.StatusBadRequest,
+			expMessage: "--",
+		},
+		"plain-with-lv": {
+			disk: `
+{
+	"partitions": [
+		{
+			"type": "plain",
+			"logical_volumes": [
+				{
+					"name": "homelv",
+					"mountpoint": "/home",
+					"label": "home",
+					"fs_type": "ext4",
+					"minsize": "2 GiB"
+				}
+			]
+		}
+	]
+}
+`,
+		},
+		"notype-with-subvol": {
+			disk: `
+{
+	"partitions": [
+		{
+			"subvolumes": [
+				{
+					"name": "home",
+					"mountpoint": "/home"
+				}
+			]
+		}
+	]
+}
+`,
+		},
+		"plain-with-subvol": {
+			disk: `
+{
+	"partitions": [
+		{
+			"type": "plain",
+			"subvolumes": [
+				{
+					"name": "home",
+					"mountpoint": "/home"
+				}
+			]
+		}
+	]
+}
+`,
+		},
+		"lvm-with-subvol": {
+			disk: `
+{
+	"partitions": [
+		{
+			"type": "lvm",
+			"subvolumes": [
+				{
+					"name": "home",
+					"mountpoint": "/home"
+				}
+			]
+		}
+	]
+}
+`,
+		},
+		"btrfs-with-lv": {
+			disk: `
+{
+	"partitions": [
+		{
+			"type": "btrfs",
+			"logical_volumes": [
+				{
+					"name": "homelv",
+					"mountpoint": "/home",
+					"label": "home",
+					"fs_type": "ext4",
+					"minsize": "2 GiB"
+				}
+			]
+		}
+	]
+}
+`,
+		},
+	}
+	// disk := []byte(`
+	// {
+	// "partitions": [
+	// 	{
+	// 		"mountpoint": "/data",
+	// 		"fs_type": "ext4",
+	// 		"minsize": "1073741824"
+	// 	},
+	// 	{
+	// 		"mountpoint": "/root",
+	// 		"fs_type": "ext4",
+	// 		"minsize": "1024 MiB"
+	// 	},
+	// 	{
+	// 	"type": "lvm",
+	// 	"logical_volumes": []
+	// 	},
+	// 	{
+	// 		"fs_type": "swapo",
+	// 		"minsize": "1 GiB",
+	// 		"mountpoint": "/swap"
+	// 	}
+	// ]
+	// }
+	// `)
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			var d v1.Disk
+			require.NoError(json.Unmarshal([]byte(tc.disk), &d))
+			c := v1.Customizations{
+				Disk: &d,
+			}
+			payload := v1.ComposeRequest{
+				Customizations: &c,
+				Distribution:   "centos-9",
+				ImageRequests: []v1.ImageRequest{
+					{
+						Architecture: "x86_64",
+						ImageType:    v1.ImageTypesAws,
+						UploadRequest: v1.UploadRequest{
+							Type:    v1.UploadTypesAws,
+							Options: uo,
+						},
+					},
+				},
+			}
+
+			respStatusCode, body := tutils.PostResponseBody(t, srv.URL+"/api/image-builder/v1/compose", payload)
+			require.Equal(tc.expStatus, respStatusCode)
+			require.Contains(string(body), tc.expMessage)
+		})
+	}
 }
